@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -60,7 +61,12 @@ def _load_modules() -> None:
 def build_parser() -> argparse.ArgumentParser:
     _load_modules()
     parser = argparse.ArgumentParser(prog="vmp", description="voice-ml-platform command line")
-    parser.add_argument("--version", action="store_true", help="print the package version")
+    parser.add_argument(
+        "--version",
+        dest="_version",
+        action="store_true",
+        help="print the package version",
+    )
     sub = parser.add_subparsers(dest="command")
     for cmd in sorted(_COMMANDS.values(), key=lambda c: c.name):
         p = sub.add_parser(cmd.name, help=cmd.help)
@@ -72,14 +78,22 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.version:
+    run = getattr(args, "_run", None)
+    # A subcommand may define its own --version; the private dest keeps the two
+    # apart, and the top-level flag only applies when no subcommand was given.
+    if getattr(args, "_version", False) and run is None:
         from vmp import __version__
 
         print(__version__)
         return 0
-    run = getattr(args, "_run", None)
     if run is None:
         parser.print_help()
         return 2
-    return int(run(args))
+    try:
+        return int(run(args))
+    except (FileNotFoundError, ValueError, KeyError) as exc:
+        # A bad path or a malformed config is user error, not a crash: report it
+        # on stderr and exit non-zero rather than printing a traceback.
+        print(f"vmp {args.command}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
 

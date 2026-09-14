@@ -47,3 +47,36 @@ def test_cli_version(capsys):
 
 def test_cli_no_command_prints_help():
     assert main([]) == 2
+
+
+def test_cli_reports_user_error_without_traceback(tmp_path, capsys):
+    """A missing source path exits 1 with a message, not a traceback."""
+    code = main(
+        [
+            "edge", "bundle", "build",
+            "--src", str(tmp_path / "absent"), "--out", str(tmp_path / "o"),
+            "--name", "voice", "--version", "0.1.0",
+            "--target", "onnx", "--base-model", "m",
+        ]
+    )
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "vmp edge" in err and "absent" in err
+    assert "Traceback" not in err
+
+
+def test_subcommand_version_flag_does_not_shadow_top_level(tmp_path):
+    """`--version` on a subcommand is that subcommand's option, not the global one."""
+    out = tmp_path / "bundle"
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "model.onnx").write_bytes(b"x")
+    code = main(
+        [
+            "edge", "bundle", "build",
+            "--src", str(src), "--out", str(out),
+            "--name", "voice", "--version", "0.2.0",
+            "--target", "onnx", "--base-model", "m", "--dry-run",
+        ]
+    )
+    assert code == 0

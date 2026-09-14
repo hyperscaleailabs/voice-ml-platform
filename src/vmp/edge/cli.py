@@ -31,7 +31,7 @@ def _add_args(parser: argparse.ArgumentParser) -> None:
     p.add_argument("--src", required=True, help="directory with exported model files")
     p.add_argument("--out", required=True)
     p.add_argument("--name", required=True)
-    p.add_argument("--version", required=True)
+    p.add_argument("--version", dest="bundle_version", required=True)
     p.add_argument("--target", required=True)
     p.add_argument("--base-model", required=True)
     p.add_argument("--adapter-version", default=None)
@@ -77,7 +77,7 @@ def _run(args: argparse.Namespace) -> int:
                 args.src,
                 args.out,
                 name=args.name,
-                version=args.version,
+                version=args.bundle_version,
                 target=args.target,
                 base_model=args.base_model,
                 adapter_version=args.adapter_version,

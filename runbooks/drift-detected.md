@@ -75,7 +75,7 @@ vmp eval gate --rules configs/gates.toml --metrics /tmp/metrics.json
 The golden set is fixed, so it does not drift with the population — which is the
 point: it separates "the inputs changed" from "the model got worse". Known weak
 spot: the `asr_names` category measured 28.9% WER against 2.69% overall on 108
-synthetic clips (alpha-core, cycle 5, 2026-09-12, `evals/golden/README.md`,
+synthetic clips (alpha-core, 2026-09-05, `evals/golden/README.md`,
 2026-09-05). Names drift first and drift hardest.
 
 ## Mitigate

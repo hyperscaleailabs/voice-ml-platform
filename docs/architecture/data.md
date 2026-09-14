@@ -60,8 +60,8 @@ Two rules carried from the predecessor's golden set apply here:
   `human`, and a reported number says which. Synthetic speaker diversity is not
   a substitute for real accent, noise and disfluency; the predecessor's
   speaker-variance stratum scored 0.0% WER across 28 synthetic voices, which is
-  a finding about the method, not about robustness (alpha-core, cycle 5,
-  2026-09-12, `evals/golden/README.md`).
+  a finding about the method, not about robustness (alpha-core,
+   2026-09-05, `evals/golden/README.md`).
 
 A third rule comes from the accent-adaptation spike: **labels must be clean.**
 Historical transcripts are the STT model's own uncorrected output, so known

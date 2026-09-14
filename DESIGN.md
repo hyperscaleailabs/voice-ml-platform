@@ -88,8 +88,11 @@ Enums as `str` constants, not `Enum`, so they serialize plainly: stages are
 - Numbers in docs and READMEs must have a source. Measurements that came from the
   private `alpha-core` project are cited as
   "alpha-core, cycle 5, 2026-09-12, `<file>`" — never presented as this repo's
-  benchmark. Demo output may be quoted only if the demo actually prints it. Do not
-  invent benchmarks, throughput figures, or cost numbers.
+  benchmark. The date is the date the measurement was taken, so a fact from an
+  earlier run carries that run's date instead (the golden set below is
+  2026-09-05, not cycle 5's 2026-09-12). Demo output may be quoted only if the
+  demo actually prints it. Do not invent benchmarks, throughput figures, or
+  cost numbers.
 - Documentation tone: neutral, technical, concise. Explain what it is, how it
   works, why it matters. No marketing language. Lines <= 100 chars in Markdown.
 - No secrets, no absolute local paths, no references to private machines.

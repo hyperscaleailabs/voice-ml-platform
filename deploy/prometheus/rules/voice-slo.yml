@@ -111,14 +111,30 @@ groups:
           summary: "vmp-api scrape target down"
           runbook: runbooks/incident-response.md
 
+      # One device failing verification is not fleet-wide user impact, so it is
+      # a ticket -- the paging rule in runbooks/on-call.md. The device refuses
+      # to run an unverified bundle and keeps serving the previous one, so the
+      # failure is contained. Several devices failing at once is a bad bundle
+      # rather than a bad device, and that does page.
       - alert: EdgeBundleVerifyFailed
         expr: increase(vmp_edge_bundle_verify_failed_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          threshold_kind: target
+        annotations:
+          summary: "Edge bundle verification failed on {{ $labels.device }}"
+          runbook: runbooks/edge-bundle-verify-failed.md
+
+      - alert: EdgeBundleVerifyFailedFleet
+        expr: count(increase(vmp_edge_bundle_verify_failed_total[15m]) > 0) >= 3
         for: 0m
         labels:
           severity: page
           threshold_kind: target
         annotations:
-          summary: "Edge bundle verification failed on {{ $labels.device }}"
+          summary: "Edge bundle verification failed on 3 or more devices"
+          description: "A bundle that fails on several devices is a bad bundle; halt the rollout."
           runbook: runbooks/edge-bundle-verify-failed.md
 
       # Drift: PSI above 0.2 is the conventional "significant shift" threshold.

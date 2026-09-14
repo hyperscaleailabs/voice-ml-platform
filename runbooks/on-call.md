@@ -43,6 +43,7 @@ that your kubeconfig expired is a preventable half-hour.
 | Ray Serve application not `RUNNING` | yes | `rollback-model.md` |
 | Edge rollout gate failed | yes | `edge-bundle-verify-failed.md` |
 | Bundle verification failed on a device | no — ticket | `edge-bundle-verify-failed.md` |
+| Bundle verification failed on three or more devices | yes | `edge-bundle-verify-failed.md` |
 | Drift alert (PSI / KS) | no — ticket | `drift-detected.md` |
 | Golden-set WER regression | no — ticket | `drift-detected.md` |
 | Materialize CronJob failed once | no — ticket | `drift-detected.md` |

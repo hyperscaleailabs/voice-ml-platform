@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voice-ml-platform"
+version = "0.1.0"
+description = "ML platform for voice agents: Ray, TRL, PEFT/LoRA, DPO training; feature store; vector and graph RAG; voice agent API; edge export."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Hyperscale AI Labs" }]
+keywords = ["ml-platform", "voice-agent", "ray", "trl", "peft", "lora", "dpo", "rag", "feature-store", "edge"]
+classifiers = [
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "License :: OSI Approved :: Apache Software License",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# The core is standard library only. Every heavy dependency is an optional
+# adapter behind a Protocol and is imported lazily inside the adapter class.
+dependencies = []
+
+[project.optional-dependencies]
+train = ["torch>=2.4", "transformers>=4.45", "peft>=0.13", "trl>=0.12", "datasets>=3.0", "accelerate>=1.0"]
+ray = ["ray[default,data,train,serve]>=2.40"]
+serve = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "websockets>=13"]
+vllm = ["vllm>=0.6"]
+rag = ["psycopg[binary]>=3.2", "qdrant-client>=1.12", "neo4j>=5.25", "sentence-transformers>=3.0"]
+features = ["feast>=0.40", "redis>=5.0", "pyarrow>=17"]
+audio = ["faster-whisper>=1.1", "kokoro>=0.9", "sounddevice>=0.5", "soundfile>=0.12", "numpy>=1.26"]
+edge = ["onnx>=1.16", "onnxruntime>=1.19", "optimum>=1.23", "llama-cpp-python>=0.3"]
+mlx = ["mlx>=0.20", "mlx-whisper>=0.4", "mlx-lm>=0.20"]
+eval = ["jiwer>=3.0"]
+obs = ["opentelemetry-api>=1.27", "opentelemetry-sdk>=1.27", "opentelemetry-exporter-otlp>=1.27", "prometheus-client>=0.21"]
+registry = ["mlflow>=2.16"]
+docs = ["mkdocs-material>=9.5", "mkdocs-glightbox>=0.4"]
+dev = ["pytest>=8.0", "ruff>=0.6", "fastapi>=0.115", "httpx>=0.27", "numpy>=1.26"]
+
+[project.scripts]
+vmp = "vmp.cli:main"
+
+[project.urls]
+Homepage = "https://hyperscaleailabs.github.io/voice-ml-platform/"
+Repository = "https://github.com/hyperscaleailabs/voice-ml-platform"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vmp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+markers = [
+  "slow: takes more than a few seconds",
+  "gpu: needs an accelerator",
+  "integration: needs an external service",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "examples"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["E402"]
+"research/*" = ["E402", "E501"]

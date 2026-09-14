@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.vmp/
+site/
+.DS_Store
+.idea/
+.ipynb_checkpoints/
+*.wav
+research/**/audio/
+research/**/out/

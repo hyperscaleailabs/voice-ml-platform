@@ -1,0 +1,48 @@
+# Ingress for the voice agent API.
+#
+# Every value below marked PLACEHOLDER is cluster-specific and must be set
+# before this is applied: the ingress class, the hostname, the TLS issuer and
+# the Secret the certificate lands in. Nothing here provisions DNS or a
+# certificate; it only asks the cluster's controllers to.
+#
+# WebSocket streaming (/v1/sessions/{id}/stream) needs the long read/send
+# timeouts below; the defaults of most controllers are 60 s and will cut a
+# streamed turn short.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: vmp-api
+    app.kubernetes.io/component: api
+  annotations:
+    # cert-manager: issues and renews the certificate named in spec.tls[].secretName.
+    cert-manager.io/cluster-issuer: PLACEHOLDER-cluster-issuer
+    # Redirect plain HTTP and enforce HSTS at the edge.
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Streaming turns: keep the connection open for the length of a session.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # Sticky sessions: a session's turns should reach the replica holding it.
+    nginx.ingress.kubernetes.io/affinity: cookie
+    nginx.ingress.kubernetes.io/session-cookie-name: vmp-session
+spec:
+  ingressClassName: PLACEHOLDER-ingress-class
+  tls:
+    - hosts:
+        - PLACEHOLDER.example.com
+      secretName: vmp-api-tls
+  rules:
+    - host: PLACEHOLDER.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  name: http

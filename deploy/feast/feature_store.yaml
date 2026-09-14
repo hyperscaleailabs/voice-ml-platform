@@ -1,0 +1,23 @@
+# Feast repository configuration.
+#
+# The offline store is the Parquet tree written by `vmp features materialize`;
+# the online store is Redis database 1 (the API uses database 0 for sessions).
+# Paths are relative to this directory, so `feast apply` runs from deploy/feast/.
+#
+# In the cluster, VMP_FEATURE_STORE_ROOT points at a volume and REDIS_HOST at
+# the `redis` Service; see deploy/k8s/base/feast-materialize-cronjob.yaml.
+project: vmp
+provider: local
+registry: data/registry.db
+entity_key_serialization_version: 3
+
+online_store:
+  type: redis
+  # Cluster: redis:6379 (namespace platform). Local compose: localhost:6379.
+  connection_string: ${REDIS_HOST:redis}:${REDIS_PORT:6379},db=1
+
+offline_store:
+  type: file
+
+flags:
+  alpha_features: false

@@ -183,7 +183,7 @@ def _make_deployments(config: dict[str, Any]) -> dict[str, Any]:
 
     from vmp.serving.api import create_app
     from vmp.serving.backends import backends_from_config
-    from vmp.serving.runtime import InMemorySessionStore, VoiceRuntime
+    from vmp.serving.runtime import DEFAULT_SYSTEM_PROMPT, InMemorySessionStore, VoiceRuntime
 
     serving = config.get("serving", config)
     rs = _section(config)
@@ -250,8 +250,7 @@ def _make_deployments(config: dict[str, Any]) -> dict[str, Any]:
         _HandleSTT(stt_h),
         _HandleLLM(llm_h),
         _HandleTTS(tts_h),
-        system_prompt=str(serving.get("system_prompt", ""))
-        or VoiceRuntime.__init__.__defaults__[3],  # type: ignore[index]
+        system_prompt=str(serving.get("system_prompt", "")) or DEFAULT_SYSTEM_PROMPT,
         max_history_turns=int(serving.get("max_history_turns", 12)),
         max_context_chars=int(serving.get("max_context_chars", 1200)),
     )

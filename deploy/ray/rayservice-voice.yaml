@@ -1,0 +1,239 @@
+# Ray Serve inference graph for the voice agent.
+#
+#   kubectl apply -f deploy/ray/rayservice-voice.yaml
+#   kubectl get rayservice -n platform vmp-voice -o wide
+#
+# `serveConfigV2` below is the same document `vmp serve ray --yaml` prints from
+# configs/serving.toml; regenerate it after changing that config rather than
+# editing both. KubeRay performs zero-downtime updates: a change to
+# serveConfigV2 is applied in place, a change to rayClusterConfig starts a second
+# cluster and cuts traffic over once the new Serve applications are healthy.
+apiVersion: ray.io/v1
+kind: RayService
+metadata:
+  name: vmp-voice
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: vmp-voice
+    app.kubernetes.io/component: serving
+    app.kubernetes.io/part-of: voice-ml-platform
+spec:
+  serviceUnhealthySecondThreshold: 300
+  deploymentUnhealthySecondThreshold: 300
+
+  serveConfigV2: |
+    proxy_location: EveryNode
+    http_options:
+      host: 0.0.0.0
+      port: 8000
+    applications:
+      - name: voice-agent
+        route_prefix: /
+        import_path: vmp.serving.ray_serve:app
+        runtime_env:
+          env_vars:
+            VMP_CONFIG: /app/configs/serving.toml
+            OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+            OTEL_SERVICE_NAME: vmp-voice
+        deployments:
+          # Speech to text. CPU by default (faster-whisper int8); give it a GPU
+          # fraction and raise max_replicas when the STT stage dominates TTFA.
+          - name: STTDeployment
+            autoscaling_config:
+              min_replicas: 1
+              max_replicas: 8
+              target_ongoing_requests: 2.0
+              upscale_delay_s: 10.0
+              downscale_delay_s: 120.0
+            ray_actor_options:
+              num_cpus: 1.0
+            max_ongoing_requests: 4
+          # The model. One GPU per replica; scaling is slow and expensive, so
+          # max_replicas is small and downscale_delay is long.
+          - name: LLMDeployment
+            autoscaling_config:
+              min_replicas: 1
+              max_replicas: 4
+              target_ongoing_requests: 8.0
+              upscale_delay_s: 30.0
+              downscale_delay_s: 600.0
+            ray_actor_options:
+              num_cpus: 2.0
+              num_gpus: 1.0
+            max_ongoing_requests: 16
+          # Text to speech. Streams sentence by sentence, so it sees more, shorter
+          # requests than the LLM and scales on the same signal as STT.
+          - name: TTSDeployment
+            autoscaling_config:
+              min_replicas: 1
+              max_replicas: 8
+              target_ongoing_requests: 2.0
+              upscale_delay_s: 10.0
+              downscale_delay_s: 120.0
+            ray_actor_options:
+              num_cpus: 1.0
+            max_ongoing_requests: 4
+          # FastAPI ingress: holds sessions, drives the turn loop, emits traces.
+          - name: VoiceAgentIngress
+            autoscaling_config:
+              min_replicas: 2
+              max_replicas: 8
+              target_ongoing_requests: 16.0
+              upscale_delay_s: 10.0
+              downscale_delay_s: 300.0
+            ray_actor_options:
+              num_cpus: 0.5
+            max_ongoing_requests: 32
+
+  rayClusterConfig:
+    rayVersion: "2.40.0"
+    enableInTreeAutoscaling: true
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: "0.0.0.0"
+        num-cpus: "0"
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: vmp-voice
+            app.kubernetes.io/component: serve-head
+          annotations:
+            prometheus.io/scrape: "true"
+            prometheus.io/port: "8080"
+        spec:
+          containers:
+            - name: ray-head
+              image: ghcr.io/hyperscaleailabs/vmp-api:latest
+              ports:
+                - name: gcs
+                  containerPort: 6379
+                - name: client
+                  containerPort: 10001
+                - name: dashboard
+                  containerPort: 8265
+                - name: serve
+                  containerPort: 8000
+                - name: metrics
+                  containerPort: 8080
+              env:
+                - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                  value: http://otel-collector:4317
+                - name: VMP_REDIS_URL
+                  value: redis://redis:6379/0
+                - name: VMP_QDRANT_URL
+                  value: http://qdrant:6333
+                - name: VMP_NEO4J_URI
+                  value: bolt://neo4j:7687
+                - name: VMP_S3_ENDPOINT
+                  value: http://minio:9000
+              envFrom:
+                - secretRef:
+                    name: vmp-api-secrets
+                    optional: true
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 4Gi
+                limits:
+                  cpu: "2"
+                  memory: 8Gi
+              volumeMounts:
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 2Gi
+    workerGroupSpecs:
+      # STT, TTS and the ingress land here.
+      - groupName: serve-cpu
+        replicas: 2
+        minReplicas: 2
+        maxReplicas: 16
+        rayStartParams: {}
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: vmp-voice
+              app.kubernetes.io/component: serve-worker-cpu
+          spec:
+            containers:
+              - name: ray-worker
+                image: ghcr.io/hyperscaleailabs/vmp-api:latest
+                env:
+                  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                    value: http://otel-collector:4317
+                  - name: VMP_REDIS_URL
+                    value: redis://redis:6379/0
+                envFrom:
+                  - secretRef:
+                      name: vmp-api-secrets
+                      optional: true
+                resources:
+                  requests:
+                    cpu: "2"
+                    memory: 8Gi
+                  limits:
+                    cpu: "4"
+                    memory: 16Gi
+                volumeMounts:
+                  - name: dshm
+                    mountPath: /dev/shm
+            volumes:
+              - name: dshm
+                emptyDir:
+                  medium: Memory
+                  sizeLimit: 4Gi
+      # LLMDeployment replicas land here.
+      - groupName: serve-gpu
+        replicas: 1
+        minReplicas: 1
+        maxReplicas: 4
+        rayStartParams: {}
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: vmp-voice
+              app.kubernetes.io/component: serve-worker-gpu
+          spec:
+            nodeSelector:
+              nvidia.com/gpu.present: "true"
+            tolerations:
+              - key: nvidia.com/gpu
+                operator: Exists
+                effect: NoSchedule
+            containers:
+              - name: ray-worker
+                image: ghcr.io/hyperscaleailabs/vmp-api:latest
+                env:
+                  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                    value: http://otel-collector:4317
+                  - name: HF_HOME
+                    value: /var/lib/vmp/hf
+                envFrom:
+                  - secretRef:
+                      name: vmp-api-secrets
+                      optional: true
+                resources:
+                  requests:
+                    cpu: "4"
+                    memory: 32Gi
+                    nvidia.com/gpu: 1
+                  limits:
+                    cpu: "8"
+                    memory: 64Gi
+                    nvidia.com/gpu: 1
+                volumeMounts:
+                  - name: dshm
+                    mountPath: /dev/shm
+                  - name: cache
+                    mountPath: /var/lib/vmp
+            volumes:
+              - name: dshm
+                emptyDir:
+                  medium: Memory
+                  sizeLimit: 16Gi
+              - name: cache
+                emptyDir:
+                  sizeLimit: 100Gi

@@ -210,9 +210,9 @@ class EdgeRuntime:
         tr = self.tracer
         sink_rows = getattr(getattr(tr, "sink", None), "rows", None)
         row_start = len(sink_rows) if sink_rows is not None else 0
+        segmenter = resolve_segmenter()  # resolved before t0: an import must not count as latency
         t0 = time.perf_counter()
         result = EdgeTurn(session=session, turn=n, transcript="", assistant_text="")
-        segmenter = resolve_segmenter()
         with tr.span("turn", session, n) as turn_payload:
             with tr.span("stt", session, n):
                 result.transcript = str(self.stt.transcribe(audio))
@@ -257,11 +257,12 @@ class EdgeRuntime:
                     self.refusals += 1
             if result.refused:
                 turn_payload["refused"] = True
-        result.ttfa_ms = (
-            round((first_audio_at - t0) * 1000.0, 3) if first_audio_at is not None else None
-        )
-        if result.ttfa_ms is not None and result.ttfa_ms > self.policy.max_ttfa_ms:
-            turn_payload["over_max_ttfa"] = True
+            result.ttfa_ms = (
+                round((first_audio_at - t0) * 1000.0, 3) if first_audio_at is not None else None
+            )
+            # Written inside the span so it reaches the `turn.end` payload.
+            if result.ttfa_ms is not None and result.ttfa_ms > self.policy.max_ttfa_ms:
+                turn_payload["over_max_ttfa"] = True
         self.last_ttfa_ms = result.ttfa_ms
         self.turns += 1
         if result.assistant_text and not result.refused:

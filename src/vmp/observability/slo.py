@@ -194,6 +194,12 @@ def _expr(slo: SLO, window: str) -> str:
     return template.format(w=window)
 
 
+def _yaml_quote(value: str) -> str:
+    """Double-quoted YAML scalar. PromQL label matchers carry `"`, so escape them."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def to_prometheus_rules_yaml(
     slos: Iterable[SLO],
     *,
@@ -211,21 +217,24 @@ def to_prometheus_rules_yaml(
         camel = "".join(part.capitalize() for part in slo.name.replace("-", "_").split("_"))
         op = ">" if slo.comparator == "<=" else "<"
         expr = f"({_expr(slo, rate_window)}) {op} {slo.objective}"
+        summary = (
+            f"{slo.indicator} outside objective "
+            f"({slo.comparator} {slo.objective}, window {slo.window})"
+        )
         lines.extend(
             [
                 f"      - alert: VmpSlo{camel}",
-                f'        expr: "{expr}"',
+                f"        expr: {_yaml_quote(expr)}",
                 f"        for: {for_duration}",
                 "        labels:",
                 "          severity: page",
                 f"          slo: {slo.name}",
                 "        annotations:",
-                f'          summary: "{slo.indicator} outside objective ({slo.comparator} '
-                f'{slo.objective}, window {slo.window})"',
+                f"          summary: {_yaml_quote(summary)}",
             ]
         )
         if slo.description:
-            lines.append(f'          description: "{slo.description}"')
+            lines.append(f"          description: {_yaml_quote(slo.description)}")
     return "\n".join(lines) + "\n"
 
 

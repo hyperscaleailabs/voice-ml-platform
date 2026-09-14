@@ -1,0 +1,32 @@
+# Keep the three replicas on different nodes, and on different zones when the
+# cluster has more than one. `required` on the node, `preferred` on the zone:
+# a single-zone cluster must still be able to schedule all three.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: platform
+spec:
+  template:
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: vmp-api
+              topologyKey: kubernetes.io/hostname
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: vmp-api
+                topologyKey: topology.kubernetes.io/zone
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: vmp-api

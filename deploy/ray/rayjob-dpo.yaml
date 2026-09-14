@@ -1,0 +1,50 @@
+# DPO run as a RayJob.
+#
+#   kubectl apply -f deploy/ray/rayjob-dpo.yaml
+#   kubectl logs -n platform -l job-name=vmp-dpo -f
+#
+# DPO consumes the preference pairs produced by `vmp data pairs`; the SFT
+# adapter it starts from is named in the TOML. Drop `--dry-run` to train.
+# The config ships inside the image at /app/configs (see deploy/docker/Dockerfile.train).
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: vmp-dpo
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: vmp-dpo
+    app.kubernetes.io/component: training
+    app.kubernetes.io/part-of: voice-ml-platform
+spec:
+  entrypoint: vmp train dpo --config /app/configs/train_dpo.toml --dry-run
+  # Attach to the long-lived cluster. Remove this and add rayClusterSpec to get
+  # an ephemeral cluster that is deleted when the job finishes.
+  clusterSelector:
+    ray.io/cluster: vmp-ray
+  shutdownAfterJobFinishes: false
+  ttlSecondsAfterFinished: 86400
+  activeDeadlineSeconds: 86400
+  entrypointNumCpus: 1
+  runtimeEnvYAML: |
+    env_vars:
+      VMP_REGISTRY_ROOT: /var/lib/vmp/registry
+      VMP_S3_ENDPOINT: http://minio:9000
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: vmp-train-dpo
+  submitterPodTemplate:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ray-job-submitter
+          image: ghcr.io/hyperscaleailabs/vmp-train:latest
+          envFrom:
+            - secretRef:
+                name: vmp-api-secrets
+                optional: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

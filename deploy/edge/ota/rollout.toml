@@ -1,0 +1,82 @@
+# OTA rollout policy for an edge bundle.
+#
+# Read by the rollout driver and by `runbooks/rollback-model.md`. Every stage
+# must pass its gates for `soak_minutes` before the next stage starts. A failed
+# gate halts the rollout and, if `auto_rollback` is set, reverts the devices
+# already updated to `previous_version`.
+#
+# Thresholds below are targets to design against, not measurements.
+
+[rollout]
+bundle = "voice-agent-edge"
+version = "0.2.0"
+previous_version = "0.1.0"
+strategy = "canary"
+auto_rollback = true
+# Bundle verification runs on the device before the runtime starts. A device
+# that fails it is counted as a failure for the stage it belongs to.
+require_verify = true
+# Device selection is deterministic: hash(device_id) into 0..99, take the first
+# N%. The same device is therefore always in the same canary wave, which makes
+# a failure reproducible rather than a lottery.
+selector = "hash(device_id) % 100"
+
+[[stage]]
+name = "canary"
+percent = 5
+soak_minutes = 60
+# Below this many devices a percentage is meaningless; take at least this many.
+min_devices = 3
+
+[[stage]]
+name = "expand"
+percent = 25
+soak_minutes = 240
+
+[[stage]]
+name = "full"
+percent = 100
+soak_minutes = 1440
+
+# Gates are evaluated per stage over the devices in that stage only, and only
+# after `min_turns` turns have been observed — a stage with too little traffic
+# waits rather than passing on noise.
+[gates]
+min_turns = 200
+# Compared against the same window on `previous_version`, on the same devices
+# where possible, so a change in traffic mix does not read as a regression.
+comparison = "previous_version"
+
+[[gates.check]]
+metric = "ttfa_p95_ms"
+max = 3000.0
+description = "p95 time to first audio, from playback.response_ms in the device trace"
+
+[[gates.check]]
+metric = "ttfa_p95_ms_delta_pct"
+max = 10.0
+description = "p95 TTFA may not be more than 10% worse than the previous bundle"
+
+[[gates.check]]
+metric = "error_rate"
+max = 0.01
+description = "fraction of turns that errored"
+
+[[gates.check]]
+metric = "error_rate_delta"
+max = 0.002
+description = "absolute error-rate increase against the previous bundle"
+
+[[gates.check]]
+metric = "verify_failure_rate"
+max = 0.0
+description = "bundle verification must fail on no device"
+
+[rollback]
+# On a halted rollout: repoint the current symlink and restart. Devices that
+# have not yet been updated are simply removed from the rollout.
+trigger = "gate_failure"
+target = "previous_version"
+# How long a rolled-back device is excluded from new rollouts, so a device does
+# not oscillate between bundles while an incident is open.
+quarantine_minutes = 1440

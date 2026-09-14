@@ -1,0 +1,62 @@
+# Edge voice agent as a systemd service.
+#
+#   sudo install -m 0644 vmp-edge.service /etc/systemd/system/vmp-edge.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now vmp-edge
+#
+# Assumes a `vmp` user, the runtime installed under /opt/vmp, and the active
+# bundle symlinked at /var/lib/vmp/edge/current (see ../README.md).
+[Unit]
+Description=vmp edge voice agent
+Documentation=https://hyperscaleailabs.github.io/voice-ml-platform/
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vmp
+Group=vmp
+SupplementaryGroups=audio
+
+Environment=VMP_EDGE_BUNDLE_ROOT=/var/lib/vmp/edge
+Environment=VMP_CONFIG=/etc/vmp/edge.toml
+# --backend selects the local runtime; `echo` needs no weights and is the
+# safe default for a first boot. Set it to the bundle's target on a real device.
+Environment=VMP_TRACE_PATH=/var/lib/vmp/trace.jsonl
+Environment=PYTHONUNBUFFERED=1
+
+# Refuse to start on a bundle that does not verify: a device that fails
+# verification stays on the previous bundle rather than serving a broken one.
+ExecStartPre=/opt/vmp/bin/vmp edge bundle verify /var/lib/vmp/edge/current
+ExecStart=/opt/vmp/bin/vmp serve api --host 127.0.0.1 --port 8080 --backend echo
+
+Restart=on-failure
+RestartSec=5s
+# Five failures inside a minute stop the unit instead of hiding a crash loop.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+# The policy in edge.toml is offline_only; the sandbox enforces the same thing.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=false
+MemoryDenyWriteExecute=false
+LockPersonality=true
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/vmp
+StateDirectory=vmp
+# Loopback only. Remove this line, and only this line, for a device that is
+# allowed to reach a cloud fallback; the policy file must agree.
+IPAddressAllow=localhost
+IPAddressDeny=any
+
+[Install]
+WantedBy=multi-user.target

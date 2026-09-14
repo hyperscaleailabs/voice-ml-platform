@@ -33,8 +33,19 @@ spec:
             - name: materialize
               # Same image as the API built with `--build-arg EXTRAS=serve,obs,features`.
               image: ghcr.io/hyperscaleailabs/vmp-api:latest
-              command: ["vmp"]
-              args: ["features", "materialize", "--incremental"]
+              # `vmp features materialize` takes one view at a time. session_features
+              # is written online by the stream updater, so the batch job covers the
+              # two views whose sources land offline first.
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  for view in speaker_features device_features; do
+                    vmp features materialize \
+                      --view "$view" \
+                      --offline-root "$VMP_FEATURE_STORE_ROOT" \
+                      --redis-url "$VMP_REDIS_URL"
+                  done
               env:
                 - name: VMP_FEATURE_STORE_ROOT
                   value: /var/lib/vmp/features

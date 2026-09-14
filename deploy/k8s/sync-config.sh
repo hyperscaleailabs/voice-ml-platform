@@ -6,8 +6,9 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 dst="$here/base/config"
+# serving.toml is deliberately NOT listed: the in-cluster copy is a variant,
+# not a copy (it binds 0.0.0.0 and points the paths at the pod volumes).
 pairs=(
-  "configs/serving.toml:serving.toml"
   "deploy/otel/collector.yaml:collector.yaml"
   "deploy/prometheus/prometheus.yml:prometheus.yml"
   "deploy/prometheus/rules/voice-slo.yml:voice-slo.yml"

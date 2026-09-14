@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src tests examples
+
+      - name: Test
+        run: pytest -q
+
+      - name: Run the demos
+        run: |
+          set -eu
+          for demo in examples/demo_*.py; do
+            echo "::group::$demo"
+            python "$demo"
+            echo "::endgroup::"
+          done
+
+  no-dependencies:
+    # The core package is standard library only: every heavy backend is an
+    # optional adapter imported lazily inside its class. This job is the check
+    # that the claim is still true — pytest and nothing else.
+    name: no dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest only
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+
+      - name: Import vmp with nothing installed
+        run: python -c "import vmp, vmp.cli, vmp.types, vmp.config; print(vmp.__file__)"
+        env:
+          PYTHONPATH: src
+
+      - name: Test
+        # Tests needing fastapi/httpx skip themselves via pytest.importorskip.
+        run: pytest -q
+
+      - name: Run the demos
+        run: |
+          set -eu
+          for demo in examples/demo_*.py; do
+            echo "::group::$demo"
+            python "$demo"
+            echo "::endgroup::"
+          done
+        env:
+          PYTHONPATH: src
+
+  docker:
+    name: docker build (api)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.api
+          push: false
+          load: false
+          tags: vmp-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  manifests:
+    name: manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+
+      - name: Render the kustomize overlays
+        run: |
+          set -eu
+          for overlay in local cloud; do
+            echo "::group::deploy/k8s/overlays/$overlay"
+            kubectl kustomize "deploy/k8s/overlays/$overlay"
+            echo "::endgroup::"
+          done
+
+      - name: Parse every deploy manifest
+        run: |
+          python - <<'PY'
+          import glob
+          import sys
+
+          import yaml
+
+          files = sorted(
+              set(
+                  glob.glob("deploy/**/*.yaml", recursive=True)
+                  + glob.glob("deploy/**/*.yml", recursive=True)
+                  + glob.glob(".github/**/*.yml", recursive=True)
+                  + glob.glob(".github/**/*.yaml", recursive=True)
+              )
+          )
+          bad = []
+          for path in files:
+              try:
+                  with open(path) as fh:
+                      list(yaml.safe_load_all(fh))
+              except Exception as exc:  # noqa: BLE001 - report every failure
+                  bad.append((path, exc))
+          print(f"parsed {len(files)} files")
+          for path, exc in bad:
+              print(f"FAIL {path}: {exc}")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Check the k8s config copies are in sync
+        run: ./deploy/k8s/sync-config.sh --check

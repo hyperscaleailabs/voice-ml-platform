@@ -1,0 +1,30 @@
+# Cloud cluster overlay: EKS, GKE, AKS or any conformant cluster.
+#   kubectl apply -f <your secrets>       # see deploy/k8s/secrets.example.yaml
+#   kubectl apply -k deploy/k8s/overlays/cloud
+#
+# Three API replicas spread across nodes, production-sized requests, and an
+# Ingress. `storageClassName` is still unset everywhere so the cluster default
+# applies (see deploy/README.md).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: platform
+
+resources:
+  - ../../base
+  - api-ingress.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/instance: cloud
+
+images:
+  - name: ghcr.io/hyperscaleailabs/vmp-api
+    # Pin a digest or a release tag here; `latest` is for the local overlay only.
+    newTag: v0.1.0
+
+patches:
+  - path: api-replicas-and-resources.yaml
+  - path: api-anti-affinity.yaml
+  - path: hpa-large.yaml
+  - path: pdb-two.yaml

@@ -5,7 +5,7 @@
 set -eu
 BUNDLE="${VMP_EDGE_BUNDLE:-/var/lib/vmp/edge/bundle}"
 echo "edge: verifying bundle at ${BUNDLE}"
-vmp edge bundle verify --bundle "${BUNDLE}"
+vmp edge bundle verify "${BUNDLE}"
 echo "edge: bundle verified, starting runtime"
 exec vmp serve api \
   --host "${VMP_EDGE_HOST:-127.0.0.1}" \

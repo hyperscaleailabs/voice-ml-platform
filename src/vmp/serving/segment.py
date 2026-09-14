@@ -5,9 +5,10 @@ A sentence is emitted only when it is provably complete: terminal punctuation
 then whitespace. A boundary at the very end of the buffer is not emitted until
 `flush()`, because the next token could continue it (`3.` -> `3.5`).
 Abbreviations (`Dr.`, `e.g.`, single-letter initials) and decimals are not
-boundaries. An ellipsis is a boundary only when the next word starts a new
-sentence (uppercase, digit, or opening quote). Nothing is ever truncated: text
-that is not a complete sentence stays buffered until `flush()`.
+boundaries. An ellipsis, and a period closing an already dotted word (`U.S.A.`),
+are boundaries only when the next word starts a new sentence (uppercase, digit,
+or opening quote). Nothing is ever truncated: text that is not a complete
+sentence stays buffered until `flush()`.
 """
 
 from __future__ import annotations
@@ -90,6 +91,14 @@ class Segmenter:
         return len(word) == 1 and word.isalpha()
 
     @staticmethod
+    def _is_dotted_word(buf: str, i: int) -> bool:
+        """`buf[i]` is a period and the word before it already contains one ("U.S.A")."""
+        k = i
+        while k > 0 and not buf[k - 1].isspace():
+            k -= 1
+        return "." in buf[k:i]
+
+    @staticmethod
     def _is_list_number(buf: str, i: int, j: int) -> bool:
         """`1. apples`: a bare number followed by a lowercase word is an enumerator."""
         k = i
@@ -131,8 +140,10 @@ class Segmenter:
             if run == "." and self._is_list_number(buf, i, j):
                 i = j
                 continue
-            if "..." in run or "\u2026" in run:
-                # Ellipsis: needs the next word to start a sentence.
+            # An ellipsis, or a period closing a dotted word ("U.S.A."), is a boundary
+            # only when the next word starts a sentence. Otherwise the buffer holds an
+            # acronym mid-sentence and splitting here would truncate it.
+            if "..." in run or "\u2026" in run or (run == "." and self._is_dotted_word(buf, i)):
                 k = j
                 while k < n and buf[k].isspace():
                     k += 1

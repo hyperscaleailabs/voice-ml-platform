@@ -1,0 +1,245 @@
+# KubeRay cluster for training and batch preprocessing.
+#
+#   helm repo add kuberay https://ray-project.github.io/kuberay-helm/
+#   helm install kuberay-operator kuberay/kuberay-operator -n platform
+#   kubectl apply -f deploy/ray/raycluster.yaml
+#
+# One head, one CPU worker group (Ray Data preprocessing, dry runs) and one GPU
+# worker group (Ray Train). Both groups autoscale; the GPU group starts at zero
+# so an idle cluster holds no accelerators.
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: vmp-ray
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: vmp-ray
+    app.kubernetes.io/component: ray-cluster
+    app.kubernetes.io/part-of: voice-ml-platform
+spec:
+  rayVersion: "2.40.0"
+  enableInTreeAutoscaling: true
+  autoscalerOptions:
+    upscalingMode: Default
+    idleTimeoutSeconds: 300
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+  headGroupSpec:
+    rayStartParams:
+      dashboard-host: "0.0.0.0"
+      # The head schedules nothing: it runs the GCS, the dashboard and the
+      # autoscaler, and an OOM there takes the whole cluster down.
+      num-cpus: "0"
+    template:
+      metadata:
+        labels:
+          app.kubernetes.io/name: vmp-ray
+          app.kubernetes.io/component: ray-head
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "8080"
+      spec:
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+          seccompProfile:
+            type: RuntimeDefault
+        containers:
+          - name: ray-head
+            image: rayproject/ray:2.40.0-py312
+            ports:
+              - name: gcs
+                containerPort: 6379
+              - name: client
+                containerPort: 10001
+              - name: dashboard
+                containerPort: 8265
+              - name: serve
+                containerPort: 8000
+              - name: metrics
+                containerPort: 8080
+            env:
+              - name: RAY_GRAFANA_HOST
+                value: http://grafana:3000
+              - name: RAY_PROMETHEUS_HOST
+                value: http://prometheus:9090
+              - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                value: http://otel-collector:4317
+              - name: OTEL_SERVICE_NAME
+                value: vmp-ray-head
+              - name: VMP_S3_ENDPOINT
+                value: http://minio:9000
+              - name: VMP_REDIS_URL
+                value: redis://redis:6379/0
+            envFrom:
+              - secretRef:
+                  name: vmp-api-secrets
+                  optional: true
+            resources:
+              requests:
+                cpu: "1"
+                memory: 4Gi
+              limits:
+                cpu: "2"
+                memory: 8Gi
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop: ["ALL"]
+            lifecycle:
+              preStop:
+                exec:
+                  command: ["/bin/sh", "-c", "ray stop"]
+            volumeMounts:
+              - name: dshm
+                mountPath: /dev/shm
+              - name: tmp
+                mountPath: /tmp
+        volumes:
+          - name: dshm
+            emptyDir:
+              medium: Memory
+              sizeLimit: 2Gi
+          - name: tmp
+            emptyDir: {}
+
+  workerGroupSpecs:
+    # Ray Data: JSONL corpus reads, PII scrub, chat formatting, split writes.
+    - groupName: cpu
+      replicas: 1
+      minReplicas: 1
+      maxReplicas: 8
+      rayStartParams: {}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: vmp-ray
+            app.kubernetes.io/component: ray-worker-cpu
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: ray-worker
+              image: rayproject/ray:2.40.0-py312
+              env:
+                - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                  value: http://otel-collector:4317
+                - name: OTEL_SERVICE_NAME
+                  value: vmp-ray-worker-cpu
+                - name: VMP_S3_ENDPOINT
+                  value: http://minio:9000
+              envFrom:
+                - secretRef:
+                    name: vmp-api-secrets
+                    optional: true
+              resources:
+                requests:
+                  cpu: "2"
+                  memory: 8Gi
+                limits:
+                  cpu: "4"
+                  memory: 16Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              lifecycle:
+                preStop:
+                  exec:
+                    command: ["/bin/sh", "-c", "ray stop"]
+              volumeMounts:
+                - name: dshm
+                  mountPath: /dev/shm
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 4Gi
+            - name: tmp
+              emptyDir: {}
+
+    # Ray Train: one LoRA worker per GPU. Starts empty; the autoscaler adds
+    # nodes when a RayJob asks for GPU resources and removes them when idle.
+    - groupName: gpu
+      replicas: 0
+      minReplicas: 0
+      maxReplicas: 4
+      rayStartParams: {}
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: vmp-ray
+            app.kubernetes.io/component: ray-worker-gpu
+        spec:
+          # Node pool / taint names are cluster-specific; adjust per cluster.
+          nodeSelector:
+            nvidia.com/gpu.present: "true"
+          tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+              effect: NoSchedule
+          containers:
+            - name: ray-worker
+              image: rayproject/ray:2.40.0-py312-gpu
+              env:
+                - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                  value: http://otel-collector:4317
+                - name: OTEL_SERVICE_NAME
+                  value: vmp-ray-worker-gpu
+                - name: VMP_S3_ENDPOINT
+                  value: http://minio:9000
+                - name: HF_HOME
+                  value: /var/lib/vmp/hf
+              envFrom:
+                - secretRef:
+                    name: vmp-api-secrets
+                    optional: true
+              resources:
+                requests:
+                  cpu: "4"
+                  memory: 32Gi
+                  nvidia.com/gpu: 1
+                limits:
+                  cpu: "8"
+                  memory: 64Gi
+                  nvidia.com/gpu: 1
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              lifecycle:
+                preStop:
+                  exec:
+                    command: ["/bin/sh", "-c", "ray stop"]
+              volumeMounts:
+                - name: dshm
+                  mountPath: /dev/shm
+                - name: cache
+                  mountPath: /var/lib/vmp
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 16Gi
+            - name: cache
+              emptyDir:
+                sizeLimit: 100Gi
+            - name: tmp
+              emptyDir: {}

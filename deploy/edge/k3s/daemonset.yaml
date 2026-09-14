@@ -1,0 +1,218 @@
+# Edge fleet on k3s: one voice agent pod per device node.
+#
+#   kubectl label node <node> vmp.io/device=voice-agent
+#   kubectl apply -f deploy/edge/k3s/daemonset.yaml
+#
+# A DaemonSet, not a Deployment: the workload is bound to the hardware (the
+# microphone and speaker of that device), so scheduling is "one per matching
+# node" and never "N somewhere". The nodeSelector on vmp.io/device is what keeps
+# it off the control-plane and off any node without audio hardware.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vmp-edge
+  labels:
+    app.kubernetes.io/part-of: voice-ml-platform
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-config
+  namespace: vmp-edge
+  labels:
+    app.kubernetes.io/name: vmp-edge
+    app.kubernetes.io/part-of: voice-ml-platform
+data:
+  # Mirrors configs/edge.toml. offline_only means the pod may not egress.
+  edge.toml: |
+    [policy]
+    offline_only = true
+    allowed_egress = []
+    max_ttfa_ms = 3000
+    fallback = "degrade"
+
+    [policy.retention]
+    audio = "none"
+---
+# offline_only as a network rule, not only as a config value.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: edge-offline-only
+  namespace: vmp-edge
+  labels:
+    app.kubernetes.io/name: vmp-edge
+    app.kubernetes.io/part-of: voice-ml-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vmp-edge
+  policyTypes: [Egress]
+  egress:
+    # DNS only. Everything else, including the cloud API, is denied.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: vmp-edge
+  namespace: vmp-edge
+  labels:
+    app.kubernetes.io/name: vmp-edge
+    app.kubernetes.io/component: edge-runtime
+    app.kubernetes.io/part-of: voice-ml-platform
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vmp-edge
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # One device at a time. The OTA rollout in ota/rollout.toml drives the
+      # wider canary; this only bounds a single stage's blast radius.
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vmp-edge
+        app.kubernetes.io/component: edge-runtime
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      # The device label. Nodes without it never receive this pod.
+      nodeSelector:
+        vmp.io/device: voice-agent
+      tolerations:
+        # Devices are often tainted to keep general workloads off them.
+        - key: vmp.io/device
+          operator: Exists
+          effect: NoSchedule
+      priorityClassName: system-node-critical
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Verify before serve. A device that fails verification keeps running
+        # the previous pod; the new one never becomes ready.
+        - name: verify-bundle
+          image: ghcr.io/hyperscaleailabs/vmp-edge:latest
+          command: ["vmp", "edge", "bundle", "verify", "/var/lib/vmp/edge/current"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: bundles
+              mountPath: /var/lib/vmp/edge
+              readOnly: true
+      containers:
+        - name: edge
+          image: ghcr.io/hyperscaleailabs/vmp-edge:latest
+          command: ["vmp"]
+          args:
+            - serve
+            - api
+            - --host
+            - 127.0.0.1
+            - --port
+            - "8080"
+            - --backend
+            - echo
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: VMP_CONFIG
+              value: /etc/vmp/edge.toml
+            - name: VMP_EDGE_BUNDLE_ROOT
+              value: /var/lib/vmp/edge
+            - name: VMP_TRACE_PATH
+              value: /var/lib/vmp/trace.jsonl
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: VMP_DEVICE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: config
+              mountPath: /etc/vmp
+              readOnly: true
+            - name: bundles
+              mountPath: /var/lib/vmp/edge
+            - name: state
+              mountPath: /var/lib/vmp
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: edge-config
+        # Bundles live on the device's own disk: a device that reboots without a
+        # network must still come up on its installed bundle.
+        - name: bundles
+          hostPath:
+            path: /var/lib/vmp/edge
+            type: DirectoryOrCreate
+        - name: state
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi

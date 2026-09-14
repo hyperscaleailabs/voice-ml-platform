@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -84,6 +83,3 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     return int(run(args))
 
-
-if __name__ == "__main__":
-    sys.exit(main())

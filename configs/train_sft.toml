@@ -1,0 +1,32 @@
+# Supervised fine-tuning of a small instruct model for short spoken replies.
+# Load with `vmp train sft --config configs/train_sft.toml --dry-run`.
+
+kind = "sft"
+base_model = "Qwen/Qwen2.5-0.5B-Instruct"
+output_dir = "runs/sft-spoken"
+seed = 42
+
+[datasets]
+train = "data/sft_train.jsonl"   # rows: {"prompt": ..., "response": ...} or {"messages": [...]}
+eval = "data/sft_eval.jsonl"
+
+[lora]
+r = 16
+alpha = 32
+dropout = 0.05
+target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+task_type = "CAUSAL_LM"
+
+[hyperparams]
+epochs = 1
+learning_rate = 2e-4
+per_device_batch_size = 4
+gradient_accumulation = 4
+max_seq_length = 1024
+warmup_ratio = 0.03
+logging_steps = 10
+
+[compute]
+backend = "local"
+num_workers = 1
+gpu_per_worker = 0

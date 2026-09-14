@@ -1,0 +1,30 @@
+# Serving configuration mounted into the API pod at /etc/vmp/serving.toml.
+# Mirror of configs/serving.toml; run `deploy/k8s/sync-config.sh` after editing
+# the canonical file. Values here are defaults; env vars with prefix VMP_ win.
+
+[paths]
+registry_root = "/var/lib/vmp/registry"
+feature_store_root = "/var/lib/vmp/features"
+trace_path = "/var/lib/vmp/trace.jsonl"
+rag_index_root = "/var/lib/vmp/rag"
+edge_bundle_root = "/var/lib/vmp/edge"
+
+[serving]
+host = "0.0.0.0"
+port = 8080
+backend = "echo"            # echo | ollama | openai-compat
+max_sessions = 256
+session_ttl_s = 900
+
+[llm]
+base_url = "http://ollama:11434"
+model = ""
+ttft_budget_ms = 1000
+
+[rag]
+relevance_floor = 0.45
+top_k = 5
+
+[observability]
+otlp_endpoint = "http://otel-collector:4317"
+metrics_path = "/metrics"

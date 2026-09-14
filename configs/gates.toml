@@ -1,0 +1,30 @@
+# Release gates: every rule must pass before a candidate is promoted.
+# Values are targets; `vmp eval gate --rules configs/gates.toml --metrics <json>` applies them.
+
+[[gate]]
+metric = "wer"
+max = 0.05
+description = "golden-set word error rate"
+
+[[gate]]
+metric = "exact_match"
+min = 0.9
+description = "fraction of golden utterances transcribed exactly"
+
+[[gate]]
+metric = "ttfa_p95_ms"
+max = 3000.0
+required = false
+description = "p95 time to first audio from a trace"
+
+[[gate]]
+metric = "win_rate"
+min = 0.55
+required = false
+description = "judge win-rate of the candidate policy against the reference answers"
+
+[[gate]]
+metric = "error_rate"
+max = 0.01
+required = false
+description = "fraction of turns that errored"

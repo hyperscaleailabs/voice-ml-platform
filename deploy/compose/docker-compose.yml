@@ -1,0 +1,312 @@
+# Local stack. Profiles keep the default small:
+#   docker compose --profile core up            api + postgres + redis
+#   docker compose --profile core --profile rag up      + qdrant + neo4j + minio
+#   docker compose --profile core --profile obs up      + otel + prometheus + grafana + langfuse
+#   docker compose --profile train up           ray head (single node) for local dry runs
+# Service names are the DNS contract shared with deploy/k8s (see deploy/README.md).
+name: vmp
+
+x-healthcheck-defaults: &hc
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 20s
+
+services:
+  api:
+    profiles: ["core"]
+    image: ${VMP_IMAGE:-vmp-api:dev}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.api
+    command: ["vmp", "serve", "api", "--host", "0.0.0.0", "--port", "8080",
+              "--backend", "${VMP_LLM_BACKEND:-echo}"]
+    environment:
+      VMP_LLM_BACKEND: ${VMP_LLM_BACKEND:-echo}
+      VMP_LLM_BASE_URL: ${VMP_LLM_BASE_URL:-http://host.docker.internal:11434}
+      VMP_LOG_LEVEL: ${VMP_LOG_LEVEL:-info}
+      VMP_PG_DSN: postgresql://${POSTGRES_USER:-vmp}:${POSTGRES_PASSWORD:-change-me-postgres}@postgres:5432/${POSTGRES_DB:-vmp}
+      VMP_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis}@redis:6379/0
+      VMP_QDRANT_URL: http://qdrant:6333
+      VMP_NEO4J_URI: bolt://neo4j:7687
+      VMP_NEO4J_PASSWORD: ${NEO4J_PASSWORD:-change-me-neo4j}
+      VMP_S3_ENDPOINT: http://minio:9000
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: vmp-api
+    ports:
+      - "${VMP_API_PORT:-8080}:8080"
+    volumes:
+      - vmp-data:/var/lib/vmp
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+    restart: unless-stopped
+
+  postgres:
+    profiles: ["core", "obs"]
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vmp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-vmp}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vmp} -d ${POSTGRES_DB:-vmp}"]
+    restart: unless-stopped
+
+  redis:
+    profiles: ["core", "obs"]
+    image: redis:7-alpine
+    # noeviction is required by Langfuse and is the safe default for a feature
+    # store online cache that must not silently drop keys.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-change-me-redis}",
+              "--maxmemory-policy", "noeviction", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD:-change-me-redis}\" ping | grep -q PONG"]
+    restart: unless-stopped
+
+  qdrant:
+    profiles: ["rag"]
+    image: qdrant/qdrant:v1.12.4
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      <<: *hc
+      # The image has no curl; the TCP probe is enough for local use.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'"]
+    restart: unless-stopped
+
+  neo4j:
+    profiles: ["rag"]
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-change-me-neo4j}
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:7474 >/dev/null || exit 1"]
+    restart: unless-stopped
+
+  minio:
+    profiles: ["rag", "obs", "train"]
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-vmp-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-minio}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "mc", "ready", "local"]
+    restart: unless-stopped
+
+  # Creates the buckets the platform expects (artifacts, audio, langfuse).
+  minio-init:
+    profiles: ["rag", "obs", "train"]
+    image: minio/mc:RELEASE.2024-11-05T11-29-45Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing local/vmp-artifacts local/vmp-audio local/langfuse
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-vmp-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-minio}
+    restart: "no"
+
+  otel-collector:
+    profiles: ["obs"]
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    command: ["--config=/etc/otelcol/collector.yaml"]
+    volumes:
+      - ../otel/collector.yaml:/etc/otelcol/collector.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/13133' 2>/dev/null || exit 0"]
+    restart: unless-stopped
+
+  prometheus:
+    profiles: ["obs"]
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    volumes:
+      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+    restart: unless-stopped
+
+  grafana:
+    profiles: ["obs"]
+    image: grafana/grafana:11.3.1
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-grafana}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+    restart: unless-stopped
+
+  clickhouse:
+    profiles: ["obs"]
+    image: clickhouse/clickhouse-server:24.8
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-change-me-clickhouse}
+    ports:
+      - "8123:8123"
+      - "9009:9000"   # host 9009 to avoid clashing with minio on 9000
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"]
+    restart: unless-stopped
+
+  langfuse-worker:
+    profiles: ["obs"]
+    image: langfuse/langfuse-worker:3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vmp}:${POSTGRES_PASSWORD:-change-me-postgres}@postgres:5432/langfuse
+      SALT: ${LANGFUSE_SALT:-change-me-salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-change-me-clickhouse}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${REDIS_PASSWORD:-change-me-redis}
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-vmp-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-change-me-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-vmp-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-change-me-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+    restart: unless-stopped
+
+  langfuse:
+    profiles: ["obs"]
+    image: langfuse/langfuse:3
+    depends_on:
+      langfuse-worker:
+        condition: service_started
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3001}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-nextauth}
+    ports:
+      - "${LANGFUSE_PORT:-3001}:3000"
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/public/health >/dev/null || exit 1"]
+    restart: unless-stopped
+
+  # Single-node Ray for `vmp serve ray --dry-run` and small local training jobs.
+  # The training image is GPU-oriented; on a laptop this runs CPU-only.
+  ray-head:
+    profiles: ["train"]
+    image: ${VMP_TRAIN_IMAGE:-vmp-train:dev}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.train
+    command: ["ray", "start", "--head", "--port=6379", "--dashboard-host=0.0.0.0",
+              "--num-cpus=4", "--block"]
+    environment:
+      RAY_ADDRESS: ray://127.0.0.1:10001
+      VMP_S3_ENDPOINT: http://minio:9000
+    ports:
+      - "8265:8265"
+      - "10001:10001"
+    shm_size: "2gb"
+    volumes:
+      - vmp-data:/var/lib/vmp
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "ray status >/dev/null 2>&1 || exit 1"]
+    restart: unless-stopped
+
+volumes:
+  vmp-data:
+  postgres-data:
+  redis-data:
+  qdrant-data:
+  neo4j-data:
+  minio-data:
+  prometheus-data:
+  grafana-data:
+  clickhouse-data:
+  clickhouse-logs:

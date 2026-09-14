@@ -1,0 +1,33 @@
+# Direct preference optimisation: spoken short replies preferred over markdown / long.
+# Load with `vmp train dpo --config configs/train_dpo.toml --dry-run`.
+
+kind = "dpo"
+base_model = "Qwen/Qwen2.5-0.5B-Instruct"
+output_dir = "runs/dpo-spoken"
+seed = 42
+
+[datasets]
+train = "data/preference_pairs.jsonl"   # rows: {"prompt", "chosen", "rejected", "source"}
+
+[lora]
+r = 16
+alpha = 32
+dropout = 0.05
+target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+task_type = "CAUSAL_LM"
+
+[hyperparams]
+epochs = 1
+learning_rate = 5e-6
+per_device_batch_size = 2
+gradient_accumulation = 8
+max_seq_length = 1024
+max_prompt_length = 512
+beta = 0.1              # KL penalty toward the adapter-disabled reference
+warmup_ratio = 0.03
+logging_steps = 10
+
+[compute]
+backend = "local"
+num_workers = 1
+gpu_per_worker = 0

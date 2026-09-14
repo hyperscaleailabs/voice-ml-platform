@@ -1,0 +1,28 @@
+# Build context is the repository root:
+#   docker build -f deploy/docker/Dockerfile.api .
+# BuildKit reads `<Dockerfile>.dockerignore` next to the Dockerfile; the three
+# per-Dockerfile files in this directory are symlinks to this one.
+.git
+.venv
+.vmp
+.pytest_cache
+.ruff_cache
+.mypy_cache
+**/__pycache__
+**/*.pyc
+*.egg-info
+dist
+build
+site
+docs
+research
+deploy
+!deploy/docker/edge-entrypoint.sh
+runbooks
+.github
+tests
+*.wav
+*.ipynb
+.env
+.env.*
+!.env.example

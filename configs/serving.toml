@@ -1,0 +1,75 @@
+# Voice agent serving. Loaded with `tomllib`; `VMP_*` environment variables override.
+# Defaults run with no optional dependency: echo STT, template LLM, silent TTS.
+
+[serving]
+system_prompt = "You are a voice assistant. Answer in short spoken sentences. Do not use lists, markdown, or symbols."
+max_history_turns = 12
+max_context_chars = 1200
+
+[serving.api]
+host = "127.0.0.1"
+port = 8080
+max_request_bytes = 10485760   # 10 MiB
+turn_timeout_s = 60.0
+session_ttl_s = 3600.0
+# Bearer auth is enabled by setting VMP_API_TOKEN in the environment; never put a token here.
+
+[serving.backends]
+stt = "echo"             # echo | faster-whisper
+llm = "template"         # template | ollama | openai-compat | vllm
+tts = "silent"           # silent | kokoro
+
+[serving.backends.faster_whisper]
+model = "small.en"
+device = "cpu"
+compute_type = "int8"
+
+[serving.backends.ollama]
+host = "http://localhost:11434"
+model = "gemma3:4b"
+
+[serving.backends.openai_compat]
+base_url = "http://localhost:8000/v1"
+model = "default"
+
+[serving.backends.vllm]
+model = "Qwen/Qwen2.5-0.5B-Instruct"
+max_tokens = 256
+
+[serving.backends.kokoro]
+voice = "af_heart"
+lang_code = "a"
+
+[serving.ray_serve]
+app_name = "voice-agent"
+route_prefix = "/"
+http_host = "0.0.0.0"
+http_port = 8000
+llm_mode = "openai-compat"   # openai-compat (proxy to a vLLM server) | vllm (in-process engine)
+
+[serving.ray_serve.stt]
+min_replicas = 1
+max_replicas = 4
+target_ongoing_requests = 2
+num_cpus = 1.0
+num_gpus = 0.0
+
+[serving.ray_serve.llm]
+min_replicas = 1
+max_replicas = 2
+target_ongoing_requests = 8
+num_cpus = 1.0
+num_gpus = 0.0
+
+[serving.ray_serve.tts]
+min_replicas = 1
+max_replicas = 4
+target_ongoing_requests = 2
+num_cpus = 1.0
+num_gpus = 0.0
+
+[serving.ray_serve.ingress]
+min_replicas = 1
+max_replicas = 2
+target_ongoing_requests = 16
+num_cpus = 0.5

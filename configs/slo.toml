@@ -1,0 +1,27 @@
+# Service level objectives for the voice agent.
+# These are targets to design against, not measurements. Measured values come
+# from `vmp obs slo --trace <trace.jsonl>`.
+
+[[slo]]
+name = "ttfa_p95"
+indicator = "ttfa_p95_ms"
+objective = 3000.0
+window = "30d"
+comparator = "<="
+description = "target: p95 time to first audio at or below 3000 ms"
+
+[[slo]]
+name = "error_rate"
+indicator = "error_rate"
+objective = 0.01
+window = "30d"
+comparator = "<="
+description = "target: at most 1% of turns error"
+
+[[slo]]
+name = "wer"
+indicator = "wer"
+objective = 0.05
+window = "30d"
+comparator = "<="
+description = "target: golden-set WER at or below 5%"

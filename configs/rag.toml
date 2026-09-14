@@ -1,0 +1,21 @@
+# Retrieval configuration. Loaded with `tomllib`; keys map to `Index.from_config`.
+
+[rag.corpus]
+include = ["**/*.md", "**/*.txt", "**/*.py", "**/*.toml"]
+
+[rag.chunk]
+lines = 20      # lines per chunk
+overlap = 4     # lines shared between neighbouring chunks
+
+[rag.embedder]
+kind = "hashing"   # "hashing" is stdlib only; adapters are wired in code
+dim = 512
+
+[rag.retrieval]
+top_k = 5
+candidate_k = 20        # per-path candidate pool before fusion
+relevance_floor = 0.15  # min cosine unless a rare-literal keyword hit
+min_fused = 0.0         # min RRF score; 0 disables
+graph_hops = 1
+keyword_max_df = 3            # a query n-gram is "rare" if it occurs in <= this many chunks
+keyword_max_df_fraction = 0.2 # and in <= this fraction of all chunks (matters on small corpora)

@@ -1,0 +1,133 @@
+# SLO recording and alerting rules for the voice agent.
+#
+# Thresholds below are TARGETS chosen for this platform, not measurements.
+# The only measured numbers this repository may cite come from the private
+# alpha-core project (see DESIGN.md); none of them are used as thresholds here.
+#
+# Metric contract (exposed by vmp.observability, scraped at /metrics):
+#   vmp_ttfa_ms                      histogram  time-to-first-audio per turn
+#   vmp_stage_ms{stage=...}          histogram  per-stage latency
+#   vmp_llm_ttft_ms                  histogram  LLM time-to-first-token
+#   vmp_turns_total                  counter    completed turns
+#   vmp_turn_errors_total            counter    turns that ended in error
+#   vmp_wer{set="golden"}            gauge      latest golden-set WER (0..1)
+#   vmp_drift_psi{feature=...}       gauge      PSI per feature
+#   vmp_edge_bundle_verify_failed_total{device=...}  counter
+#   vmp_edge_bundle_info{version=...}                gauge (=1)
+groups:
+  - name: voice-slo-recording
+    interval: 30s
+    rules:
+      - record: vmp:ttfa_ms:p50_5m
+        expr: histogram_quantile(0.50, sum(rate(vmp_ttfa_ms_bucket[5m])) by (le))
+      - record: vmp:ttfa_ms:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(vmp_ttfa_ms_bucket[5m])) by (le))
+      - record: vmp:stage_ms:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(vmp_stage_ms_bucket[5m])) by (le, stage))
+      - record: vmp:turns:rate_5m
+        expr: sum(rate(vmp_turns_total[5m]))
+      # Error ratio over several windows for multiwindow burn-rate alerts.
+      - record: vmp:error_ratio:5m
+        expr: >
+          sum(rate(vmp_turn_errors_total[5m]))
+          / clamp_min(sum(rate(vmp_turns_total[5m])), 1e-9)
+      - record: vmp:error_ratio:30m
+        expr: >
+          sum(rate(vmp_turn_errors_total[30m]))
+          / clamp_min(sum(rate(vmp_turns_total[30m])), 1e-9)
+      - record: vmp:error_ratio:1h
+        expr: >
+          sum(rate(vmp_turn_errors_total[1h]))
+          / clamp_min(sum(rate(vmp_turns_total[1h])), 1e-9)
+      - record: vmp:error_ratio:6h
+        expr: >
+          sum(rate(vmp_turn_errors_total[6h]))
+          / clamp_min(sum(rate(vmp_turns_total[6h])), 1e-9)
+
+  - name: voice-slo-alerts
+    rules:
+      # Target: TTFA p95 under 3000 ms. See runbooks/ttfa-slo-breach.md.
+      - alert: VoiceTTFAP95High
+        expr: vmp:ttfa_ms:p95_5m > 3000
+        for: 10m
+        labels:
+          severity: page
+          slo: ttfa
+          threshold_kind: target
+        annotations:
+          summary: "Time-to-first-audio p95 above target (3000 ms) for 10m"
+          description: "p95 TTFA is {{ $value | printf \"%.0f\" }} ms over the last 5m."
+          runbook: runbooks/ttfa-slo-breach.md
+
+      # Error-budget burn, multiwindow. Availability target 99.5% (error budget 0.5%).
+      # Fast burn: 14.4x over 1h AND 5m. Slow burn: 6x over 6h AND 30m.
+      - alert: VoiceErrorBudgetBurnFast
+        expr: >
+          vmp:error_ratio:1h > (14.4 * 0.005)
+          and vmp:error_ratio:5m > (14.4 * 0.005)
+        for: 2m
+        labels:
+          severity: page
+          slo: availability
+          burn: fast
+          threshold_kind: target
+        annotations:
+          summary: "Fast error-budget burn (14.4x) on voice turns"
+          runbook: runbooks/incident-response.md
+
+      - alert: VoiceErrorBudgetBurnSlow
+        expr: >
+          vmp:error_ratio:6h > (6 * 0.005)
+          and vmp:error_ratio:30m > (6 * 0.005)
+        for: 15m
+        labels:
+          severity: ticket
+          slo: availability
+          burn: slow
+          threshold_kind: target
+        annotations:
+          summary: "Slow error-budget burn (6x) on voice turns"
+          runbook: runbooks/incident-response.md
+
+      # Target: golden-set WER under 5% (0.05). See runbooks/drift-detected.md.
+      - alert: VoiceWERHigh
+        expr: max(vmp_wer{set="golden"}) > 0.05
+        for: 30m
+        labels:
+          severity: ticket
+          slo: wer
+          threshold_kind: target
+        annotations:
+          summary: "Golden-set WER above target (5%)"
+          runbook: runbooks/drift-detected.md
+
+      - alert: ApiDown
+        expr: up{job="vmp-api"} == 0
+        for: 2m
+        labels:
+          severity: page
+          threshold_kind: target
+        annotations:
+          summary: "vmp-api scrape target down"
+          runbook: runbooks/incident-response.md
+
+      - alert: EdgeBundleVerifyFailed
+        expr: increase(vmp_edge_bundle_verify_failed_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          threshold_kind: target
+        annotations:
+          summary: "Edge bundle verification failed on {{ $labels.device }}"
+          runbook: runbooks/edge-bundle-verify-failed.md
+
+      # Drift: PSI above 0.2 is the conventional "significant shift" threshold.
+      - alert: FeatureDriftPSIHigh
+        expr: max by (feature) (vmp_drift_psi) > 0.2
+        for: 1h
+        labels:
+          severity: ticket
+          threshold_kind: target
+        annotations:
+          summary: "PSI above 0.2 for feature {{ $labels.feature }}"
+          runbook: runbooks/drift-detected.md

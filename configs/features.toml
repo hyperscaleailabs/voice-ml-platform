@@ -1,0 +1,44 @@
+# Feature views, mirrored from src/vmp/features/views.py for the CLI.
+# `vmp features materialize` and `vmp features feast-export` read this file.
+# Sources: traces (stage trace JSONL), eval (evaluation runs), edge (device reports).
+
+[store]
+offline = "jsonl"
+online = "memory"
+
+[[views]]
+name = "session_features"
+entity = "session"
+ttl_s = 3600
+source = "traces"
+description = "Rolling per-session features updated from stage traces."
+features = [
+  { name = "turn_count", dtype = "int", description = "completed turns in the session" },
+  { name = "avg_user_utterance_s", dtype = "float", description = "mean listen-stage duration in seconds" },
+  { name = "avg_response_ms", dtype = "float", description = "mean time to first audio (playback response_ms)" },
+  { name = "last_intent", dtype = "str", description = "intent of the most recent turn" },
+  { name = "accent_profile", dtype = "str", description = "accent tag reported by STT" },
+]
+
+[[views]]
+name = "speaker_features"
+entity = "speaker"
+ttl_s = 604800
+source = "eval"
+description = "Seven-day quality aggregates per speaker, from evaluation runs."
+features = [
+  { name = "wer_7d", dtype = "float", description = "word error rate over the trailing seven days" },
+  { name = "exact_match_rate_7d", dtype = "float", description = "exact transcript match rate, seven days" },
+  { name = "wake_word_corrections_7d", dtype = "int", description = "wake-word corrections applied, seven days" },
+]
+
+[[views]]
+name = "device_features"
+entity = "device"
+ttl_s = 86400
+source = "edge"
+description = "Edge device state and one-day latency percentile."
+features = [
+  { name = "edge_bundle_version", dtype = "str", description = "installed EdgeBundle version" },
+  { name = "p95_ttfa_ms_24h", dtype = "float", description = "p95 time to first audio over 24 hours" },
+]

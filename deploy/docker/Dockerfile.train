@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1.7
+# Training image for Ray Train / TRL jobs. Build from the repository root:
+#   docker build -f deploy/docker/Dockerfile.train -t vmp-train:dev .
+# The base tag pins CUDA + torch; change TORCH_TAG to match the cluster driver.
+ARG TORCH_TAG=2.5.1-cuda12.4-cudnn9-runtime
+FROM pytorch/pytorch:${TORCH_TAG}
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/var/lib/vmp/hf \
+    VMP_REGISTRY_ROOT=/var/lib/vmp/registry \
+    VMP_TRACE_PATH=/var/lib/vmp/trace.jsonl
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git curl ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 10001 vmp \
+ && useradd --uid 10001 --gid vmp --home-dir /app --create-home --shell /usr/sbin/nologin vmp \
+ && mkdir -p /var/lib/vmp && chown -R vmp:vmp /var/lib/vmp
+
+WORKDIR /app
+COPY --chown=vmp:vmp pyproject.toml README.md LICENSE ./
+COPY --chown=vmp:vmp src ./src
+COPY --chown=vmp:vmp configs ./configs
+# torch comes from the base image; pip resolves the rest of the extras against it.
+RUN pip install ".[train,ray,eval]"
+
+USER 10001:10001
+VOLUME ["/var/lib/vmp"]
+ENTRYPOINT ["tini", "--"]
+# The RayJob manifests override this with the real entrypoint.
+CMD ["vmp", "train", "sft", "--config", "configs/train_sft.toml", "--dry-run"]

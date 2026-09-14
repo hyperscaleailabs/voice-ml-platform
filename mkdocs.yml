@@ -1,0 +1,104 @@
+site_name: voice-ml-platform
+site_url: https://hyperscaleailabs.github.io/voice-ml-platform/
+site_description: >-
+  ML platform for voice agents, shown as a progression from research to
+  development to productization. Training (LoRA, SFT, DPO on Ray), feature
+  store, vector and graph RAG, serving API, edge export, evaluation gates,
+  observability.
+repo_url: https://github.com/hyperscaleailabs/voice-ml-platform
+repo_name: hyperscaleailabs/voice-ml-platform
+edit_uri: edit/main/docs/
+docs_dir: docs
+copyright: Apache-2.0
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - blog:
+      blog_dir: blog
+      post_url_format: "{slug}"
+      authors_file: "{blog}/.authors.yml"
+      post_excerpt: required
+      archive: false
+  - glightbox
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Progression: progression.md
+  - Architecture:
+      - Full stack: architecture/full-stack.md
+      - Data: architecture/data.md
+      - Components: architecture/components.md
+      - Security and reliability: architecture/security-reliability.md
+      - Operations: architecture/operations.md
+  - Guides:
+      - LoRA SFT training: guides/training-lora-sft.md
+      - DPO training: guides/training-dpo.md
+      - Whisper accent LoRA: guides/whisper-accent-lora.md
+      - Ray: guides/ray.md
+      - Feature store: guides/feature-store.md
+      - RAG, vector and graph: guides/rag-vector-graph.md
+      - Serving API: guides/serving-api.md
+      - Edge export: guides/edge-export.md
+      - Evaluation and gates: guides/evaluation-and-gates.md
+      - Observability: guides/observability.md
+  - Research: research.md
+  - Blog:
+      - blog/index.md
+  - Whitepapers:
+      - whitepapers/index.md
+      - Research to production: whitepapers/research-to-production-ml-platform-for-voice-agents.md
+      - Hypothesis-driven development: whitepapers/hypothesis-driven-development-for-ml-platforms.md
+  - References: references.md
+  - Runbooks: runbooks.md
+  - API: api.md

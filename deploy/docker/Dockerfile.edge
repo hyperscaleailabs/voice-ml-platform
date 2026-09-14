@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1.7
+# Edge runtime image. Multi-arch (linux/arm64 and linux/amd64):
+#   docker buildx build --platform linux/arm64 -f deploy/docker/Dockerfile.edge -t vmp-edge:dev .
+# The image contains the package only. The model bundle is mounted at
+# /var/lib/vmp/edge/bundle (or delivered by the OTA agent) and is verified
+# before the runtime starts. Heavy backends (onnxruntime, llama-cpp) are
+# installed via the `edge` extra; set INSTALL_EDGE_EXTRA=0 for a stub-only image.
+ARG PY_TAG=3.12-slim
+FROM python:${PY_TAG} AS build
+ARG INSTALL_EDGE_EXTRA=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
+WORKDIR /src
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential cmake git \
+ && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml README.md LICENSE ./
+COPY src ./src
+COPY configs ./configs
+RUN python -m venv /opt/venv \
+ && /opt/venv/bin/pip install --upgrade pip \
+ && if [ "$INSTALL_EDGE_EXTRA" = "1" ]; then /opt/venv/bin/pip install ".[edge,obs]"; \
+    else /opt/venv/bin/pip install ".[obs]"; fi
+
+FROM python:${PY_TAG} AS runtime
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    VMP_EDGE_BUNDLE_ROOT=/var/lib/vmp/edge \
+    VMP_TRACE_PATH=/var/lib/vmp/trace.jsonl \
+    VMP_EDGE_BUNDLE=/var/lib/vmp/edge/bundle
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgomp1 tini ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 10001 vmp \
+ && useradd --uid 10001 --gid vmp --home-dir /app --create-home --shell /usr/sbin/nologin vmp \
+ && mkdir -p /var/lib/vmp/edge && chown -R vmp:vmp /var/lib/vmp
+COPY --from=build --chown=vmp:vmp /opt/venv /opt/venv
+COPY --chown=vmp:vmp configs /app/configs
+COPY --chown=vmp:vmp deploy/docker/edge-entrypoint.sh /app/edge-entrypoint.sh
+WORKDIR /app
+USER 10001:10001
+VOLUME ["/var/lib/vmp"]
+ENTRYPOINT ["tini", "--", "/app/edge-entrypoint.sh"]

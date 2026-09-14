@@ -1,0 +1,55 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: platform
+
+commonLabels:
+  app.kubernetes.io/part-of: voice-ml-platform
+
+resources:
+  - namespace.yaml
+  - api-serviceaccount.yaml
+  - api-deployment.yaml
+  - api-service.yaml
+  - api-hpa.yaml
+  - api-pdb.yaml
+  - api-networkpolicy.yaml
+  - postgres-statefulset.yaml
+  - redis-deployment.yaml
+  - qdrant-statefulset.yaml
+  - neo4j-statefulset.yaml
+  - minio-statefulset.yaml
+  - otel-collector-deployment.yaml
+  - prometheus-deployment.yaml
+  - grafana-deployment.yaml
+  - feast-materialize-cronjob.yaml
+
+# Files under config/ are copies of the canonical files elsewhere in the repo;
+# refresh them with deploy/k8s/sync-config.sh (CI checks they are in sync).
+configMapGenerator:
+  - name: serving-config
+    files:
+      - serving.toml=config/serving.toml
+  - name: postgres-init
+    files:
+      - 001_schema.sql=config/001_schema.sql
+  - name: otel-collector-config
+    files:
+      - collector.yaml=config/collector.yaml
+  - name: prometheus-config
+    files:
+      - prometheus.yml=config/prometheus.yml
+  - name: prometheus-rules
+    files:
+      - voice-slo.yml=config/voice-slo.yml
+  - name: grafana-datasources
+    files:
+      - prometheus.yaml=config/grafana-datasources.yaml
+  - name: grafana-dashboard-providers
+    files:
+      - dashboards.yaml=config/grafana-dashboards.yaml
+  - name: grafana-dashboards
+    files:
+      - voice-agent.json=config/voice-agent.json
+
+generatorOptions:
+  disableNameSuffixHash: false

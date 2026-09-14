@@ -1,0 +1,70 @@
+# Materializes the offline feature views into the Redis online store.
+# Schedule: every 15 minutes, incremental. See deploy/feast/README.md.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: feast-materialize
+  namespace: platform
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: feast-materialize
+        spec:
+          restartPolicy: Never
+          serviceAccountName: vmp-api
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: materialize
+              # Same image as the API built with `--build-arg EXTRAS=serve,obs,features`.
+              image: ghcr.io/hyperscaleailabs/vmp-api:latest
+              command: ["vmp"]
+              args: ["features", "materialize", "--incremental"]
+              env:
+                - name: VMP_FEATURE_STORE_ROOT
+                  value: /var/lib/vmp/features
+                - name: VMP_REDIS_URL
+                  value: redis://redis:6379/1
+                - name: FEAST_REPO_PATH
+                  value: /etc/feast
+              envFrom:
+                - secretRef:
+                    name: vmp-api-secrets
+                    optional: true
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/vmp
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: "1"
+                  memory: 2Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: data
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}

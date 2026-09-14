@@ -1,0 +1,25 @@
+# Edge export, bundle and runtime policy.
+
+[export]
+base_model = "google/gemma-3-270m"
+adapter_path = ".vmp/adapters/voice-sft"
+target = "gguf"          # onnx | gguf | mlx
+out_dir = ".vmp/edge/export"
+
+[export.quantization]
+method = "q4_k_m"        # int8 | int4 | q4_k_m | none
+
+[bundle]
+name = "voice-agent-edge"
+version = "0.1.0"
+min_runtime_version = "0.1.0"
+out_dir = ".vmp/edge/bundles"
+
+[policy]
+offline_only = true
+allowed_egress = []
+max_ttfa_ms = 3000
+fallback = "degrade"     # cloud | degrade | refuse
+
+[policy.retention]
+audio = "none"           # none | local

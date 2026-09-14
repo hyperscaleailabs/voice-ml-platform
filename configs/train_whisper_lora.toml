@@ -1,0 +1,32 @@
+# LoRA on Whisper attention projections for one speaker's accent.
+# Load with `vmp train whisper-lora --config configs/train_whisper_lora.toml --dry-run`.
+
+kind = "whisper-lora"
+base_model = "openai/whisper-small.en"
+output_dir = "runs/whisper-accent"
+seed = 42
+
+[datasets]
+train = "data/accent_train.jsonl"   # rows: {"audio_path": ..., "text": ..., "duration_s": ...}
+
+[lora]
+r = 16
+alpha = 32
+dropout = 0.05
+target_modules = ["q_proj", "v_proj"]
+task_type = "SEQ_2_SEQ_LM"
+
+[hyperparams]
+epochs = 3
+learning_rate = 1e-3
+per_device_batch_size = 8
+gradient_accumulation = 1
+warmup_ratio = 0.05
+logging_steps = 5
+language = "en"
+task = "transcribe"
+
+[compute]
+backend = "local"
+num_workers = 1
+gpu_per_worker = 0

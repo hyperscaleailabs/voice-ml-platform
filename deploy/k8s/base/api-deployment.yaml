@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: vmp-api
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vmp-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vmp-api
+        app.kubernetes.io/component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: vmp-api
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/hyperscaleailabs/vmp-api:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - api
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8080"
+            - --backend
+            - $(VMP_LLM_BACKEND)
+          command: ["vmp"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: VMP_CONFIG
+              value: /etc/vmp/serving.toml
+            - name: VMP_LLM_BACKEND
+              value: echo
+            - name: VMP_TRACE_PATH
+              value: /var/lib/vmp/trace.jsonl
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector:4317
+            - name: OTEL_SERVICE_NAME
+              value: vmp-api
+            - name: VMP_REDIS_URL
+              value: redis://redis:6379/0
+            - name: VMP_QDRANT_URL
+              value: http://qdrant:6333
+            - name: VMP_NEO4J_URI
+              value: bolt://neo4j:7687
+            - name: VMP_S3_ENDPOINT
+              value: http://minio:9000
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          envFrom:
+            # Connection strings with credentials. See deploy/k8s/secrets.example.yaml.
+            - secretRef:
+                name: vmp-api-secrets
+                optional: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/vmp
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/vmp
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: serving-config
+        - name: data
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi

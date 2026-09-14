@@ -1,0 +1,74 @@
+# OpenTelemetry Collector (contrib). Used unchanged by docker compose and by
+# the otel-collector ConfigMap in deploy/k8s/base.
+# Pipelines: traces -> langfuse (OTLP) + debug; metrics -> prometheus exporter.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 15
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+  resource:
+    attributes:
+      - key: service.namespace
+        value: vmp
+        action: upsert
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: vmp
+    send_timestamps: true
+    resource_to_telemetry_conversion:
+      enabled: true
+  # Langfuse accepts OTLP/HTTP traces on /api/public/otel. The Authorization
+  # header is Basic base64(public_key:secret_key); inject it from the
+  # environment, never inline. Replace the endpoint when Langfuse runs elsewhere.
+  otlphttp/langfuse:
+    endpoint: http://langfuse:3000/api/public/otel
+    headers:
+      Authorization: "${env:LANGFUSE_OTLP_AUTH}"
+    tls:
+      insecure: true
+  # Placeholder for a direct ClickHouse sink (clickhouseexporter). Disabled until
+  # a schema is chosen; keep the block so the wiring is visible.
+  # clickhouse:
+  #   endpoint: tcp://clickhouse:9000?dial_timeout=10s
+  #   database: otel
+  #   ttl: 168h
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  telemetry:
+    metrics:
+      level: basic
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/langfuse, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug]

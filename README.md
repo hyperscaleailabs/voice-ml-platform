@@ -1,3 +1,7 @@
+> **Moved.** This repository now lives at
+> [AGIHubAI/voice-ml-platform](https://github.com/AGIHubAI/voice-ml-platform).
+> This copy is archived and no longer updated.
+
 # voice-ml-platform
 
 An ML platform for voice agents, shown as a progression from **research** to

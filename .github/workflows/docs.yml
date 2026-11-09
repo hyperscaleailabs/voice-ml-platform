@@ -20,12 +20,12 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # mkdocs-material reads git history for page dates.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -36,13 +36,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[docs]"
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
       - name: Build the site
         # --strict turns a broken link or a missing nav target into a failure.
         run: mkdocs build --strict
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -55,4 +55,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
